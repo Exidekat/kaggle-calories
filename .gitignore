@@ -6,6 +6,9 @@ submission.csv
 .env
 .calorie
 
+# Model params
+models/
+
 # Info files produced by catboost
 catboost_info/
 
