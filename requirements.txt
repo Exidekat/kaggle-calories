@@ -1,0 +1,14 @@
+kaggle
+pyarrow
+pandas
+polars
+matplotlib
+optuna
+catboost
+xgboost
+lightgbm
+numba
+nbstripout
+category_encoders
+umap-learn
+seaborn
