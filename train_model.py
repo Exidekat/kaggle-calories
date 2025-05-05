@@ -36,27 +36,21 @@ def tune_model(name, model_cls, param_fn, X, y, cv, n_trials=20):
             params.update({'objective': 'reg:squarederror', 'random_state': 42})
         elif name == 'catboost':
             params.update({'verbose': 0, 'random_seed': 42})
-        # For linear models, use a scaling pipeline to aid convergence
-        if name in ('lasso', 'ridge'):
-            pipeline = Pipeline([
-                ('scaler', StandardScaler()),
-                ('reg', model_cls(**params))
-            ])
-            scores = cross_val_score(
-                pipeline, X, y, cv=cv,
-                scoring='neg_root_mean_squared_error', n_jobs=-1
-            )
-        else:
-            model = model_cls(**params)
-            scores = cross_val_score(
-                model, X, y, cv=cv,
-                scoring='neg_root_mean_squared_error', n_jobs=-1
-            )
+        # Wrap all models in a scaling pipeline to prevent overflow/inf issues
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('reg', model_cls(**params))
+        ])
+        scores = cross_val_score(
+            pipeline, X, y, cv=cv,
+            scoring='neg_root_mean_squared_error', n_jobs=-1
+        )
         rmse = -scores.mean()
         return rmse
 
     study = optuna.create_study(direction='minimize')
-    study.optimize(objective, n_trials=20)
+    # Run optimization for specified number of trials
+    study.optimize(objective, n_trials=n_trials)
     return study.best_params, study.best_value
 
 
@@ -77,8 +71,10 @@ def main():
     drop_cols = ['Calories']
     if 'id' in df.columns:
         drop_cols.append('id')
+    # Prepare feature matrix
     X = df.drop(columns=drop_cols)
-
+    # Replace infinite values from feature engineering (e.g. exp overflows)
+    X = X.replace([np.inf, -np.inf], np.nan)
     # Handle any remaining missing values
     if X.isnull().any().any():
         X = X.fillna(X.mean())
@@ -130,7 +126,7 @@ def main():
         print(f"{name} best RMSE (CV): {best_rmse:.4f}")
         print(f"{name} best params: {best_params}")
 
-        # Instantiate final model with best params (include scaling for linear models)
+        # Instantiate final model with best params: wrap all in a scaling pipeline
         params = best_params.copy()
         if name == 'lightgbm':
             params.update({'random_state': 42})
@@ -138,14 +134,10 @@ def main():
             params.update({'objective': 'reg:squarederror', 'random_state': 42})
         elif name == 'catboost':
             params.update({'verbose': 0, 'random_seed': 42})
-        # Wrap linear models in a scaler pipeline for training
-        if name in ('lasso', 'ridge'):
-            model = Pipeline([
-                ('scaler', StandardScaler()),
-                ('reg', cls(**params))
-            ])
-        else:
-            model = cls(**params)
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('reg', cls(**params))
+        ])
 
         # Cross-validate final model for RMSE and R2
         results = cross_validate(
