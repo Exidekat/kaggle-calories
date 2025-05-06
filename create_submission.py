@@ -1,17 +1,24 @@
 #!/usr/bin/env python
 """
-Generate a submission file using a trained model.
-Usage: create_submission.py <model_name> <model_path>
-  - model_name: one of {lasso, ridge, lightgbm, xgboost, catboost}
-  - model_path: path to the pickled model (.pkl)
-Loads data/test_transformed.csv, runs inference, and saves to data/submission.csv
-with columns matching data/sample_submission.csv (id,Calories).
+Generate a Kaggle-style submission CSV using a trained regression model on engineered features.
+
+Usage:
+  python create_submission.py <model_name> <model_path>
+    model_name: one of {lasso, ridge, lightgbm, xgboost, catboost}
+    model_path: filepath to the pickled model (.pkl)
+
+Key behaviors:
+  - Loads features from data/test_transformed.csv (outputs of feature_engineering.py).
+  - Encodes categorical 'Sex', handles infinite/missing values.
+  - Predicts with the provided model pipeline, then clips negative values to zero to ensure valid calorie outputs.
+  - Writes submission with columns (id, Calories) matching data/sample_submission.csv to data/submission.csv.
 """
 import os
 import sys
 import argparse
 import pandas as pd
 import joblib
+import numpy as np
 
 
 def main():
@@ -52,8 +59,10 @@ def main():
         sys.exit(f"Error: Model file not found at '{args.model_path}'")
     model = joblib.load(args.model_path)
 
-    # Predict
+    # Predict and enforce non-negative outputs
     preds = model.predict(X)
+    # Clip negative predictions to zero
+    preds = np.clip(preds, 0, None)
 
     # Build submission DataFrame
     submission = pd.DataFrame({'id': ids, 'Calories': preds})

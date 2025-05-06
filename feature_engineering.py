@@ -1,9 +1,24 @@
 #!/usr/bin/env python
 """
-Perform feature engineering transforms on the dataset:
-  - For each numeric feature: add log1p ({col}_log), exp ({col}_exp), square ({col}_square), and standardized ({col}_std) columns.
-  - Create quartile bins for Age and Duration as {col}_bin.
-Saves transformed data to data/train_transformed.csv and data/test_transformed.csv.
+Perform feature engineering transforms to capture non-linear patterns and improve model stability.
+
+Transforms applied for each numeric feature:
+  - log1p ({col}_log) to compress large values.
+  - exp ({col}_exp) to expand small differences (may yield very large values).
+  - square ({col}_square) to model quadratic effects.
+  - standardized (z-score) ({col}_std) to normalize distributions.
+Binning applied to:
+  - Age and Duration via quartiles (falling back to equal-width if needed) as {col}_bin.
+
+Engineering rationale:
+  - Log/square capture non-linear relationships.
+  - Standardization ensures numeric stability for solvers and tree algorithms.
+  - Bins allow models to learn threshold effects (e.g., age groups).
+  - The combination of transforms supplies diverse features for linear and boosting models.
+
+Outputs:
+  - data/train_transformed.csv
+  - data/test_transformed.csv
 """
 import os
 import pandas as pd

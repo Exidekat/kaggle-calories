@@ -1,9 +1,20 @@
 #!/usr/bin/env python
 """
-Train and tune multiple regression models on engineered features:
-  - L1 (Lasso), L2 (Ridge), LightGBM, XGBoost, and CatBoost.
-Uses Optuna for hyperparameter optimization and ShuffleSplit cross-validation.
-Loads data from data/train_transformed.csv and saves models to models/.
+Train and tune multiple regression models on engineered features.
+
+This script reflects an iterative engineering process:
+  1. Started with simple LinearRegression on raw data.
+  2. Added feature engineering (log, exp, square, standardization, binning) to capture non-linear relationships.
+  3. Switched to Optuna-based hyperparameter tuning for multiple models:
+     Lasso, Ridge (linear), LightGBM, XGBoost, CatBoost (tree-based).
+  4. Introduced 5-fold KFold cross-validation for robust metric estimates.
+  5. Wrapped all models in StandardScaler pipelines to ensure numeric stability and avoid overflow/inf issues.
+  6. Cleaned infinite and missing feature values after engineering transforms.
+  7. Enabled CLI filtering of which models to tune and train.
+  8. Allows adjustable Optuna trial counts for scalable tuning.
+
+Final models are retrained on the full transformed dataset with optimal hyperparameters
+and saved under models/{model}_model.pkl.
 """
 import os
 import warnings
@@ -15,11 +26,13 @@ from sklearn.linear_model import Lasso, Ridge
 from lightgbm import LGBMRegressor
 from xgboost import XGBRegressor
 from catboost import CatBoostRegressor
-from sklearn.model_selection import ShuffleSplit, cross_val_score, cross_validate
+from sklearn.model_selection import KFold, cross_val_score, cross_validate
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings('ignore')
+import argparse
+import sys
 
 
 def tune_model(name, model_cls, param_fn, X, y, cv, n_trials=20):
@@ -55,6 +68,15 @@ def tune_model(name, model_cls, param_fn, X, y, cv, n_trials=20):
 
 
 def main():
+    # Parse command-line arguments for which models to train
+    parser = argparse.ArgumentParser(
+        description='Train and tune regression models on engineered features.'
+    )
+    parser.add_argument(
+        'models', nargs='*',
+        help='Optional list of model names to train (subset of: lasso, ridge, lightgbm, xgboost, catboost).'
+    )
+    args = parser.parse_args()
     # Ensure output directory exists
     os.makedirs('models', exist_ok=True)
     # Load transformed data
@@ -80,7 +102,8 @@ def main():
         X = X.fillna(X.mean())
 
     # Cross-validation splitter
-    cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+    # 5-fold cross-validation with shuffling
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
     # Mapping of model classes and parameter spaces
     model_classes = {
@@ -118,6 +141,13 @@ def main():
             'l2_leaf_reg': tr.suggest_loguniform('l2_leaf_reg', 1e-2, 10),
         },
     }
+    # Filter selected models if provided via CLI
+    if args.models:
+        invalid = set(args.models) - set(model_classes.keys())
+        if invalid:
+            sys.exit(f"Error: Unknown model name(s): {', '.join(invalid)}")
+        model_classes = {k: v for k, v in model_classes.items() if k in args.models}
+        param_fns = {k: v for k, v in param_fns.items() if k in args.models}
 
     # Tune, evaluate, and save each model
     for name, cls in model_classes.items():
