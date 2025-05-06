@@ -22,6 +22,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import optuna
+import xgboost as xgb
 from sklearn.linear_model import Lasso, Ridge
 from lightgbm import LGBMRegressor
 from xgboost import XGBRegressor
@@ -29,6 +30,8 @@ from catboost import CatBoostRegressor
 from sklearn.model_selection import KFold, cross_val_score, cross_validate
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import VotingRegressor
 
 warnings.filterwarnings('ignore')
 import argparse
@@ -41,16 +44,38 @@ def tune_model(name, model_cls, param_fn, X, y, cv, n_trials=20):
     Returns best_params and best_rmse (CV score to minimize).
     """
     def objective(trial):
+        # Suggest hyperparameters
         params = param_fn(trial)
-        # include fixed random seeds and objectives
+        # Fixed parameters per model
         if name == 'lightgbm':
             params.update({'random_state': 42})
         elif name == 'xgboost':
-            params.update({'objective': 'reg:squarederror', 'random_state': 42})
+            # Prepare for XGBoost cv
+            params.update({
+                'objective': 'reg:squarederror',
+                'seed': 42,
+                'nthread': -1,
+            })
+            # Use XGBoost's built-in CV for speed and early stopping
+            num_round = params.pop('n_estimators')
+            dtrain = xgb.DMatrix(X, label=y)
+            cv_res = xgb.cv(
+                params,
+                dtrain,
+                num_boost_round=num_round,
+                nfold=cv.n_splits,
+                metrics='rmse',
+                early_stopping_rounds=10,
+                seed=42,
+                verbose_eval=False,
+            )
+            # Return best CV RMSE
+            return float(cv_res['test-rmse-mean'].min())
         elif name == 'catboost':
             params.update({'verbose': 0, 'random_seed': 42})
-        # Wrap all models in a scaling pipeline to prevent overflow/inf issues
+        # For sklearn-based models, use pipeline CV
         pipeline = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
             ('scaler', StandardScaler()),
             ('reg', model_cls(**params))
         ])
@@ -58,8 +83,7 @@ def tune_model(name, model_cls, param_fn, X, y, cv, n_trials=20):
             pipeline, X, y, cv=cv,
             scoring='neg_root_mean_squared_error', n_jobs=-1
         )
-        rmse = -scores.mean()
-        return rmse
+        return -scores.mean()
 
     study = optuna.create_study(direction='minimize')
     # Run optimization for specified number of trials
@@ -77,9 +101,21 @@ def main():
         help='Optional list of model names to train (subset of: lasso, ridge, lightgbm, xgboost, catboost).'
     )
     parser.add_argument(
+        '--trials', '-t', type=int, default=20,
+        help='Number of Optuna trials per model (default: 20)'
+    )
+    parser.add_argument(
         '--train', type=str,
         default=os.path.join('data', 'train_fe_rev2.csv'),
         help='Path to engineered training data CSV'
+    )
+    parser.add_argument(
+        '--folds', '-f', type=int, default=5,
+        help='Number of CV folds (default: 5). Lower for faster tuning.'
+    )
+    parser.add_argument(
+        '--ensemble', action='store_true',
+        help='After training individual models, build a VotingRegressor ensemble and report its CV RMSE.'
     )
     args = parser.parse_args()
     # Ensure output directory exists
@@ -102,13 +138,18 @@ def main():
     X = df.drop(columns=drop_cols)
     # Replace infinite values from feature engineering (e.g. exp overflows)
     X = X.replace([np.inf, -np.inf], np.nan)
-    # Handle any remaining missing values
+    # Drop any columns that are entirely NaN (all values were invalid)
+    all_nan_cols = X.columns[X.isna().all()]
+    if len(all_nan_cols) > 0:
+        warnings.warn(f"Dropping columns with all missing/infinite values: {list(all_nan_cols)}")
+        X = X.drop(columns=all_nan_cols)
+    # Fill remaining missing values with column means
     if X.isnull().any().any():
         X = X.fillna(X.mean())
 
     # Cross-validation splitter
-    # 5-fold cross-validation with shuffling
-    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    # K-fold cross-validation with shuffling
+    cv = KFold(n_splits=args.folds, shuffle=True, random_state=42)
 
     # Mapping of model classes and parameter spaces
     model_classes = {
@@ -138,6 +179,11 @@ def main():
             'n_estimators': tr.suggest_int('n_estimators', 50, 500),
             'subsample': tr.suggest_uniform('subsample', 0.5, 1.0),
             'colsample_bytree': tr.suggest_uniform('colsample_bytree', 0.5, 1.0),
+            # Regularization and complexity control
+            'gamma': tr.suggest_loguniform('gamma', 1e-8, 10.0),
+            'min_child_weight': tr.suggest_int('min_child_weight', 1, 10),
+            'reg_alpha': tr.suggest_loguniform('reg_alpha', 1e-8, 10.0),
+            'reg_lambda': tr.suggest_loguniform('reg_lambda', 1e-8, 10.0),
         },
         'catboost': lambda tr: {
             'depth': tr.suggest_int('depth', 4, 10),
@@ -155,21 +201,29 @@ def main():
         param_fns = {k: v for k, v in param_fns.items() if k in args.models}
 
     # Tune, evaluate, and save each model
+    fitted_models = []
     for name, cls in model_classes.items():
-        print(f"Tuning {name}...")
-        best_params, best_rmse = tune_model(name, cls, param_fns[name], X, y, cv)
+        print(f"Tuning {name} ({args.trials} trials)...")
+        best_params, best_rmse = tune_model(
+            name, cls, param_fns[name], X, y, cv, n_trials=args.trials
+        )
         print(f"{name} best RMSE (CV): {best_rmse:.4f}")
         print(f"{name} best params: {best_params}")
 
-        # Instantiate final model with best params: wrap all in a scaling pipeline
+        # Instantiate final model with best params: wrap in imputation+scaling pipeline
         params = best_params.copy()
         if name == 'lightgbm':
             params.update({'random_state': 42})
         elif name == 'xgboost':
-            params.update({'objective': 'reg:squarederror', 'random_state': 42})
+            params.update({
+                'objective': 'reg:squarederror',
+                'random_state': 42,
+                'n_jobs': -1,
+            })
         elif name == 'catboost':
             params.update({'verbose': 0, 'random_seed': 42})
         model = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
             ('scaler', StandardScaler()),
             ('reg', cls(**params))
         ])
@@ -183,13 +237,36 @@ def main():
         r2_mean = results['test_r2'].mean()
         print(f"{name} final CV RMSE: {rmse_mean:.4f}, R2: {r2_mean:.4f}")
 
-        # Fit on full data and save
+        # Fit on full data
         model.fit(X, y)
+        # Save with RMSE in filename
         model_path = f'models/{name}_{rmse_mean:.4f}_model.pkl'
         joblib.dump(model, model_path)
-        print(f"Saved tuned model to {model_path}\n")
+        # Also save standard path for ensemble loading
+        simple_path = f'models/{name}_model.pkl'
+        joblib.dump(model, simple_path)
+        print(f"Saved tuned model to {model_path} and {simple_path}\n")
+        # Keep for ensemble
+        fitted_models.append((name, model))
 
-    # All models have been tuned, cross-validated, and saved.
+    # If requested, evaluate and save a VotingRegressor ensemble of the trained models
+    if args.ensemble and len(fitted_models) > 1:
+        print("Evaluating VotingRegressor ensemble...")
+        ensemble = VotingRegressor(estimators=fitted_models)
+        # CV for ensemble
+        results_ens = cross_validate(
+            ensemble, X, y, cv=cv,
+            scoring=('neg_root_mean_squared_error', 'r2'), n_jobs=-1
+        )
+        rmse_ens = -results_ens['test_neg_root_mean_squared_error'].mean()
+        r2_ens = results_ens['test_r2'].mean()
+        print(f"Ensemble CV RMSE: {rmse_ens:.4f}, R2: {r2_ens:.4f}")
+        # Fit on full data and save ensemble
+        ensemble.fit(X, y)
+        ens_path = 'models/ensemble_model.pkl'
+        joblib.dump(ensemble, ens_path)
+        print(f"Saved ensemble model to {ens_path}\n")
+    # All models (and ensemble) have been tuned, cross-validated, and saved.
 
 
 if __name__ == '__main__':
