@@ -34,6 +34,11 @@ def main():
         'models', nargs='*',
         help='Optional list of model names to blend (subset of: lasso, ridge, lightgbm, xgboost, catboost).'
     )
+    parser.add_argument(
+        '--test', type=str,
+        default=os.path.join('data', 'test_fe_rev2.csv'),
+        help='Path to engineered test data CSV'
+    )
     args = parser.parse_args()
 
     valid_models = ['lasso', 'ridge', 'lightgbm', 'xgboost', 'catboost']
@@ -97,7 +102,7 @@ def main():
     print("Trained meta-learner and saved to models/blending_meta_model.pkl")
 
     # Load and prepare test data
-    test_csv = os.path.join('data', 'test_transformed.csv')
+    test_csv = args.test
     if not os.path.exists(test_csv):
         sys.exit(f"Error: Test data not found at '{test_csv}'")
     df_test = pd.read_csv(test_csv)

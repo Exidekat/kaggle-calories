@@ -29,6 +29,11 @@ def main():
                         help='Model name (e.g. lasso, ridge, lightgbm, xgboost, catboost)')
     parser.add_argument('model_path', type=str,
                         help='File path to the pickled model (.pkl)')
+    parser.add_argument(
+        '--test', type=str,
+        default=os.path.join('data', 'test_fe_rev2.csv'),
+        help='Path to engineered test data CSV'
+    )
     args = parser.parse_args()
 
     # Validate model name (optional)
@@ -37,7 +42,7 @@ def main():
         print(f"Warning: model_name '{args.model_name}' not in expected {valid_models}")
 
     # Load test data
-    test_csv = os.path.join('data', 'test_fe_rev2.csv')
+    test_csv = args.test
     if not os.path.exists(test_csv):
         sys.exit(f"Error: Test data not found at '{test_csv}'")
     df = pd.read_csv(test_csv)

@@ -32,6 +32,11 @@ def main():
         'models', nargs='*',
         help='Optional list of model names to ensemble (subset of: lasso, ridge, lightgbm, xgboost, catboost).'
     )
+    parser.add_argument(
+        '--test', type=str,
+        default=os.path.join('data', 'test_fe_rev2.csv'),
+        help='Path to engineered test data CSV'
+    )
     args = parser.parse_args()
 
     valid_models = ['lasso', 'ridge', 'lightgbm', 'xgboost', 'catboost']
@@ -44,7 +49,7 @@ def main():
         model_names = valid_models
 
     # Load test data
-    test_csv = os.path.join('data', 'test_transformed.csv')
+    test_csv = args.test
     if not os.path.exists(test_csv):
         sys.exit(f"Error: Test data not found at '{test_csv}'")
     df = pd.read_csv(test_csv)

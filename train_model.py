@@ -76,11 +76,16 @@ def main():
         'models', nargs='*',
         help='Optional list of model names to train (subset of: lasso, ridge, lightgbm, xgboost, catboost).'
     )
+    parser.add_argument(
+        '--train', type=str,
+        default=os.path.join('data', 'train_fe_rev2.csv'),
+        help='Path to engineered training data CSV'
+    )
     args = parser.parse_args()
     # Ensure output directory exists
     os.makedirs('models', exist_ok=True)
     # Load transformed data
-    df = pd.read_csv('data/train_fe_rev2.csv')
+    df = pd.read_csv(args.train)
 
     # Encode categorical variable Sex if present
     if 'Sex' in df.columns:
