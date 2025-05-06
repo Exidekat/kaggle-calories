@@ -145,11 +145,11 @@ def main():
         help="Absolute correlation threshold for feature selection"
     )
     parser.add_argument(
-        '--out_train', type=str, default='train_fe_rev2.csv',
+        '--out_train', type=str, default='data/train_fe_rev2.csv',
         help="Output path for engineered train features"
     )
     parser.add_argument(
-        '--out_test', type=str, default='test_fe_rev2.csv',
+        '--out_test', type=str, default='data/test_fe_rev2.csv',
         help="Output path for engineered test features"
     )
     args = parser.parse_args()

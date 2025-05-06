@@ -38,10 +38,15 @@ def transform(df: pd.DataFrame, exclude_cols=None) -> pd.DataFrame:
     numeric_cols = [c for c in numeric_cols if c not in exclude_cols]
     # Fill missing values in numeric columns
     df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].mean())
-    # Apply log1p and exp transforms
+    # Apply log1p and exp transforms (cap exp to float32 max to avoid overflow)
+    max_float32 = np.finfo(np.float32).max
     for col in numeric_cols:
         df[f"{col}_log"] = np.log1p(df[col])
-        df[f"{col}_exp"] = np.exp(df[col])
+        # exponential transform
+        exp_col = f"{col}_exp"
+        df[exp_col] = np.exp(df[col])
+        # cap to maximum representable float32 to prevent infinite or too-large values
+        df[exp_col] = df[exp_col].clip(upper=max_float32)
 
     # Add squared and standardized features
     for col in numeric_cols:
