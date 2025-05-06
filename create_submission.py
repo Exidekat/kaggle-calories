@@ -37,7 +37,7 @@ def main():
         print(f"Warning: model_name '{args.model_name}' not in expected {valid_models}")
 
     # Load test data
-    test_csv = os.path.join('data', 'test_transformed.csv')
+    test_csv = os.path.join('data', 'test_fe_rev2.csv')
     if not os.path.exists(test_csv):
         sys.exit(f"Error: Test data not found at '{test_csv}'")
     df = pd.read_csv(test_csv)

@@ -80,7 +80,7 @@ def main():
     # Ensure output directory exists
     os.makedirs('models', exist_ok=True)
     # Load transformed data
-    df = pd.read_csv('data/train_transformed.csv')
+    df = pd.read_csv('data/train_fe_rev2.csv')
 
     # Encode categorical variable Sex if present
     if 'Sex' in df.columns:
